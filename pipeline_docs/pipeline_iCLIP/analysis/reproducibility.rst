@@ -83,7 +83,6 @@ We then use hierachical clustering to cluster similar samples together:
  
 .. report:: Sample_QC.ClusterSamplesOnReproducibility
    :render: user
-   :no-cache:
    
 
    Samples clustered on reproducibility
