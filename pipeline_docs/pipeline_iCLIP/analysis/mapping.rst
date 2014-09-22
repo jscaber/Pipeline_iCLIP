@@ -16,13 +16,13 @@ At each step here reads can be lost and/or problems can show up. The plots below
 
 .. report:: Sample_QC.ReadsPerSample
    :render: r-ggplot
-   :statement: aes(y=total, x=track) + geom_bar(stat="identity") + theme_bw() + theme(axis.text.x = element_text(angle=90)) + scale_y_continuous(labels = function(x,...) format(x,...,big.mark=",", scientific= F, trim = T)) + ylab("Reads")
+   :statement: aes(y=total, x=sample) + geom_bar(stat="identity") + theme_bw() + theme(axis.text.x = element_text(angle=90)) + scale_y_continuous(labels = function(x,...) format(x,...,big.mark=",", scientific= F, trim = T)) + ylab("Reads")
 
    Number of reads for each sample
 
 .. report:: Sample_QC.FinalReads
    :render: r-ggplot
-   :statement: aes(y=reads_mapped, x=track) + geom_bar(stat="identity") + theme_bw() + theme(axis.text.x = element_text(angle=90)) + scale_y_continuous(labels = function(x,...) format(x,...,big.mark=",", scientific= F, trim = T)) + ylab("Total unique mapped reads")
+   :statement: aes(y=reads_mapped, x=sample) + geom_bar(stat="identity") + theme_bw() + theme(axis.text.x = element_text(angle=90)) + scale_y_continuous(labels = function(x,...) format(x,...,big.mark=",", scientific= F, trim = T)) + ylab("Total unique mapped reads")
 
    Final total mapped reads
 
@@ -30,7 +30,7 @@ Notice that we start with substainlly fewer reads in replicate 1 and in the Nxf1
 
 .. report:: Sample_QC.PercentDeDuped
    :render: r-ggplot
-   :statement: aes(y=p_unique * 100, x=track) + geom_bar(stat="identity") + theme_bw() + theme(axis.text.x = element_text(angle=90)) + scale_y_continuous(labels = function(x) sprintf("%.0f%%",x)) + ylab("Percent reads unique")
+   :statement: aes(y=p_unique * 100, x=sample) + geom_bar(stat="identity") + theme_bw() + theme(axis.text.x = element_text(angle=90)) + scale_y_continuous(labels = function(x) sprintf("%.0f%%",x)) + ylab("Percent reads unique")
 
    Percent of Reads Unique
 

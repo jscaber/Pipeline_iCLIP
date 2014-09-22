@@ -10,7 +10,8 @@ Examining the gel images of the samples that produced the libraries, I estimate 
 .. report:: Sample_QC.MappedFragLength
    :render: r-ggplot
    :transform: melt
-   :statement: aes(x=Track, y=Data/sum(Data), fill=Slice) + geom_bar(position="fill", stat="identity") + ylab("Fraction of reads") + scale_fill_discrete(name="Length bin (bp)") + coord_flip() + theme_bw()
+   :groupby: all
+   :statement: aes(x=track, y=value/sum(value), fill=variable) + geom_bar(position="fill", stat="identity") + ylab("Fraction of reads") + scale_fill_discrete(name="Length bin (bp)") + coord_flip() + theme_bw()
 
    Distribution of fragment sizes of the raw reads mapped on the genome
 
@@ -21,7 +22,8 @@ This bias could be due to over amplification of the smaller fragments, meaning t
 .. report:: Sample_QC.DedupedFragLengths
    :render: r-ggplot
    :transform: melt
-   :statement: aes(x=Track, y=Data/sum(Data), fill=Slice) + geom_bar(position="fill", stat="identity") + ylab("Fraction of reads") + scale_fill_discrete(name="Length bin (bp)") + coord_flip() + theme_bw()
+   :groupby: all
+   :statement: aes(x=track, y=value/sum(value), fill=variable) + geom_bar(position="fill", stat="identity") + ylab("Fraction of reads") + scale_fill_discrete(name="Length bin (bp)") + coord_flip() + theme_bw()
 
 Here we can see that the fragements that are smaller than the supposed smallest expected fragment size make up an even larger fraction of the reads. This is confirmed by looking at the ratio of the proportions in the raw mapped reads to those in the deduplicated reads, telling us what fraction of reads in each size category are provideing unique infomation:
 

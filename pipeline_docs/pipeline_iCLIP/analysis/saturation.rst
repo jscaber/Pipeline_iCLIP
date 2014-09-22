@@ -7,8 +7,8 @@ There are only a limited number of distinct molecules in library. As we sequence
 
 .. report:: Sample_QC.AlignmentSaturation
    :render: r-ggplot
-   :transform: label-paths
-   :statement: aes(x=subset, y=counts, color = factor, shape = factor) + geom_point() + geom_line() + facet_wrap(~replicate) + theme_bw() + theme(aspect.ratio = 1)
+   :groupby: all
+   :statement: aes(x=subset, y=counts, color = factor, shape = factor) + geom_point() + geom_line() + facet_wrap(~replicate) + theme_bw(base_size=18) + theme(aspect.ratio = 1) + xlab("Fraction Sampled") + ylab("Unique Read Count")
 
    Subsampling of alignments
 
