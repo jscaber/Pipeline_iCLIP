@@ -30,7 +30,7 @@ Notice that we start with substainlly fewer reads in replicate 1 and in the Nxf1
 
 .. report:: Sample_QC.PercentDeDuped
    :render: r-ggplot
-   :statement: aes(y=p_unique * 100, x=sample) + geom_bar(stat="identity") + theme_bw() + theme(axis.text.x = element_text(angle=90)) + scale_y_continuous(labels = function(x) sprintf("%.0f%%",x)) + ylab("Percent reads unique")
+   :statement: aes(y=p_unique * 100, x=sample) + geom_bar(stat="identity") + theme_bw(base_size=14) + theme(axis.text.x = element_text(angle=90)) + scale_y_continuous(labels = function(x) sprintf("%.1f%%",x)) + ylab("Percent reads unique") + xlab("Sample")
 
    Percent of Reads Unique
 
