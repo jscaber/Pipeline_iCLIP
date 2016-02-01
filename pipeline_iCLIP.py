@@ -111,7 +111,7 @@ path:
 +--------------------+-------------------+------------------------------------------------+
 |DREME               |>=4.9.1            |Motif finding                                   |
 +--------------------+-------------------+------------------------------------------------+
-|bedGraphToBigWig    |                   |Converstion of results to BigWig                |
+|bedGraphToBigWig    |                   |Conversion of results to BigWig                 |
 +--------------------+-------------------+------------------------------------------------+
 |reaper              | 13-100            |Used for demuxing and clipping reads            |
 +--------------------+-------------------+------------------------------------------------+
@@ -152,12 +152,17 @@ import CGAT.Database as Database
 import CGATPipelines.PipelineMapping as PipelineMapping
 import CGATPipelines.PipelineMotifs as PipelineMotifs
 import CGATPipelines.PipelineRnaseq as PipelineRnaseq
-import PipelineiCLIP
+import PipelineiCLIP as PipelineiCLIP
+import length_stats
+import iCLIP
+import iCLIP2bigWig
 ###################################################
 ###################################################
 ###################################################
 ## Pipeline configuration
 ###################################################
+
+
 
 # load options from the config file
 import CGATPipelines.Pipeline as P
@@ -213,10 +218,11 @@ def connect():
 ###################################################################
 ## worker tasks
 ###################################################################
+@follows(mkdir("phiX"))
 @transform("*.fastq.gz", regex("(.+).fastq.gz"),
            add_inputs(os.path.join(PARAMS["bowtie_index_dir"],
                                    PARAMS["phix_genome"]+".fa")),
-           r"\1.fastq.clean.gz")
+           r"phiX/\1.clean.fastq.gz")
 def filterPhiX(infiles, outfile):
     ''' Use mapping to bowtie to remove any phiX mapping reads '''
 
@@ -241,149 +247,14 @@ def filterPhiX(infiles, outfile):
     P.run()
 
 
-@transform("sample_table.tsv", suffix(".tsv"), ".load")
-def loadSampleInfo(infile, outfile):
 
-    P.load(infile, outfile,
-           options="--header-names=format,barcode,track,lanes -i barcode -i track")
-###################################################################
-@follows(mkdir("demux_fq"))
-@transform(filterPhiX, regex("(.+).fastq.clean.gz"),
-           r"demux_fq/\1.fastq.umi_trimmed.gz")
-def extractUMI(infile, outfile):
-    ''' Remove UMI from the start of each read and add to the read
-    name to allow later deconvolving of PCR duplicates '''
-
-    statement=''' zcat %(infile)s
-                | python %(project_src)s/UMI-tools/extract_umi.py
-                        --bc-pattern=%(reads_bc_pattern)s
-                        -L %(outfile)s.log
-                | gzip > %(outfile)s '''
-
-    P.run()
-
-
-###################################################################
-@transform(extractUMI, suffix(".fastq.umi_trimmed.gz"),
-           "umi_stats.load")
-def loadUMIStats(infile, outfile):
-    ''' load stats on UMI usage from the extract_umi log into the
-    database '''
-
-    infile = infile + ".log"
-    P.load(infile, outfile, "-i sample -i barcode -i UMI")
-
-
-###################################################################
-@transform(filterPhiX,
-           regex("(.+).fastq.clean.gz"),
-           add_inputs("sample_table.tsv"),
-           r"\1_reaper_metadata.tsv")
-def generateReaperMetaData(infile, outfile):
-    '''Take the sample_table and use it to generate a metadata table
-    for reaper in the correct format '''
-
-    adaptor_5prime = PARAMS["reads_5prime_adapt"]
-    adaptor_3prime = PARAMS["reads_3prime_adapt"]
-
-    outlines = []
-    lane = P.snip(infile[0], ".fastq.clean.gz")
-    for line in IOTools.openFile(infile[1]):
-        fields = line.split("\t")
-        barcode = fields[1]
-        lanes = fields[-1].strip().split(",")
-        if lane in lanes:
-            outlines.append([barcode, adaptor_3prime, adaptor_5prime, "-"])
-
-    header = ["barcode", "3p-ad", "tabu", "5p-si"]
-    IOTools.writeLines(outfile, outlines, header)
-
-
-###################################################################
-@follows(loadUMIStats, generateReaperMetaData)
-@subdivide(extractUMI, regex(".+/(.+).fastq.umi_trimmed.gz"),
-       add_inputs(r"\1_reaper_metadata.tsv", "sample_table.tsv"),
-       r"demux_fq/*_\1.fastq*gz")
-def demux_fastq(infiles, outfiles):
-    '''Demultiplex each fastq file into a seperate file for each
-    barcode/UMI combination'''
-
-    infile, meta, samples = infiles
-    track = re.match(".+/(.+).fastq.umi_trimmed.gz", infile).groups()[0]
-
-    statement = '''reaper -geom 5p-bc
-                          -meta %(meta)s
-                          -i <( zcat %(infile)s | sed 's/ /_/g')
-                          --noqc
-                          -basename demux_fq/%(track)s_
-                          -clean-length 15 > %(track)s_reapear.log;
-                   checkpoint;
-                   rename _. _ demux_fq/*clean.gz;
-                 '''
-
-    for line in IOTools.openFile(samples):
-        line = line.split("\t")
-        bc, name, lanes = line[1:]
-        name = name.strip()
-        if PARAMS["reads_paired"]:
-            ext = "fastq.1.gz"
-        else:
-            ext = "fastq.gz"
-        if track in lanes.strip().split(","):
-            statement += '''checkpoint;
-                         mv demux_fq/%(track)s_%(bc)s.clean.gz
-                            demux_fq/%(name)s_%(track)s.%(ext)s; ''' % locals()
-
-    P.run()
-
-
-###################################################################
-@active_if(PARAMS["reads_paired"]==1)
-@transform("*.fastq.2.gz", suffix(".fastq.2.gz"),
-           ".fastq.reaped.2.gz")
-def reapRead2(infile,outfile):
-
-    track = P.snip(outfile,".fastq.reaped.2.gz")
-    statement = ''' reaper -geom no-bc
-                           -3pa %(reads_3prime_adapt)s
-                           -i %(infile)s
-                           -basename %(track)s
-                           --noqc
-                           -clean-length 15 > %(track)s_pair_reaper.log;
-                    checkpoint;
-                    mv %(track)s.lane.clean.gz %(outfile)s '''
-
-    P.run()
-
-
-###################################################################
-@active_if(PARAMS["reads_paired"]==1)
-@follows(mkdir("reconciled.dir"), reapRead2)
-@transform(demux_fastq,
-           regex(".+/(.+)_(.+).fastq.1.gz"),
-           add_inputs(r"\2.fastq.2.gz"),
-           [r"reconciled.dir/\1_\2.fastq.2.gz",
-            r"reconciled.dir/\1_\2.fastq.1.gz"])
-def reconsilePairs(infiles, outfiles):
-    ''' Pull reads read 2 file that are present in each read 1 file '''
-
-    track = P.snip(os.path.basename(infiles[0]), ".fastq.1.gz")
-    infiles = " ".join(infiles)
-    job_options = "-l mem_free=1G"
-    statement = '''python %(scripts_dir)s/fastqs2fastqs.py
-                          --method=reconcile
-                          --id-pattern-1='(.+)_.+_[ATGC]+'
-                          --output-filename-pattern=reconciled.dir/%(track)s.fastq.%%s.gz
-                           %(infiles)s > reconciled.dir/%(track)s.log '''
-
-    P.run()
 
 
 ###################################################################
 @follows(mkdir("fastqc"))
-@transform(demux_fastq, regex(".+/(.+).fastq(.*)\.gz"),
-           r"fastqc/\1\2.fastqc")
-def qcDemuxedReads(infile, outfile):
+@transform(filterPhiX, regex("phiX/(.+).clean.fastq.gz"),
+           r"fastqc/\1.fastqc")
+def qcReads(infile, outfile):
     ''' Run fastqc on the post demuxing and trimmed reads'''
 
     m = PipelineMapping.FastQc(nogroup=False, outdir="fastqc")
@@ -393,8 +264,8 @@ def qcDemuxedReads(infile, outfile):
 
 
 ###################################################################
-@transform(qcDemuxedReads, regex("(.+)/(.+)\.fastqc"),
-           inputs(r"\1/\2_fastqc/fastqc_data.txt"),
+@transform(qcReads, regex("(.+)/(.+)\.fastqc"),
+           inputs(r"\1/\2.clean_fastqc/fastqc_data.txt"),
            r"\1/\2_length_distribution.tsv")
 def getLengthDistribution(infile, outfile):
     ''' Parse length distribution out of the fastqc results '''
@@ -418,8 +289,7 @@ def loadLengthDistribution(infiles, outfile):
 
 
 ###################################################################
-@follows(demux_fastq,qcDemuxedReads, loadUMIStats, loadSampleInfo,
-         loadLengthDistribution)
+@follows(loadLengthDistribution)
 def PrepareReads():
     pass
 
@@ -443,7 +313,7 @@ def mapping_files():
 
 
 ###################################################################
-@follows(mkdir("mapping.dir"), demux_fastq)
+@follows(mkdir("mapping.dir"), filterPhiX)
 @files(mapping_files)
 def run_mapping(infiles, outfiles):
     ''' run the mapping target of the mapping pipeline '''
@@ -461,8 +331,8 @@ def run_mapping(infiles, outfiles):
 
 ###################################################################
 @follows(run_mapping)
-@collate("mapping.dir/*.dir/*-*-*_*.bam",
-         regex("(.+)/([^_]+\-.+\-[^_]+)_(.+)\.([^.]+)\.bam"),
+@collate("mapping.dir/*.dir/*-*-R*-*.bam",
+         regex("(.+)/([^_]+\-.+\-R[^_]+)-(.+)\.([^.]+)\.bam"),
          r"\1/merged_\2.\4.bam")
 def mergeBAMFiles(infiles, outfile):
     '''Merge reads from the same library, run on different lanes '''
@@ -522,9 +392,9 @@ def generateContextBed(infile, outfile):
     ''' Generate full length primary transcript annotations to count
     mapping contexts '''
 
-    genome = os.path.join(PARAMS["annotations_dir"], "contigs.tsv")
+    genome = os.path.join(PARAMS["annotations_dir"], "assembly.dir/contigs.tsv")
     statement = ''' zcat %(infile)s
-                  | python %(scripts_dir)s/gtf2gtf.py
+                  | python %(scriptsdir)s/gtf2gtf.py
                     --method=exons2introns
                     
                      -L %(outfile)s.log
@@ -534,7 +404,7 @@ def generateContextBed(infile, outfile):
                   checkpoint;
 
                   zcat %(infile)s %(outfile)s.tmp.gtf.gz           
-                  | python %(scripts_dir)s/gff2bed.py
+                  | python %(scriptsdir)s/gff2bed.py
                     --set-name=source
                      -L %(outfile)s.log
                   | sort -k1,1 -k2,2n
@@ -565,7 +435,7 @@ def generateContextBed(infile, outfile):
 def getContextIntervalStats(infile, outfile):
     ''' Generate length stastics on context file '''
 
-    statement = ''' python %(scripts_dir)s/bed2stats.py
+    statement = ''' python %(scriptsdir)s/bed2stats.py
                             --aggregate-by=name
                             -I %(infile)s
                     | gzip > %(outfile)s '''
@@ -590,7 +460,7 @@ def createViewMapping(infile, outfile):
 
     to_cluster = False
     statement = '''cd mapping.dir;
-                   nice python %(scripts_dir)s/../../CGATPipelines/CGATPipelines/pipeline_mapping.py
+                   nice python %(scriptsdir)s/../../CGATPipelines/CGATPipelines/pipeline_mapping.py
                    make createViewMapping -v5 -p1 '''
     P.run()
 
@@ -599,6 +469,7 @@ def createViewMapping(infile, outfile):
 @follows(mapping_qc,loadContextIntervalStats )
 def mapping():
     pass
+
 
 
 ###################################################################
@@ -614,9 +485,9 @@ def dedup_alignments(infile, outfile):
     outfile = P.snip(outfile, ".bam")
 
     job_memory="7G"
+    project_src = os.path.dirname(os.path.realpath(__file__))
     statement = ''' python %(project_src)s/UMI-tools/dedup_umi.py
                     %(dedup_options)s
-                    --output-stats=%(outfile)s
                     -I %(infile)s
                     -S %(outfile)s.tmp.bam
                     -L %(outfile)s.log;
@@ -644,7 +515,7 @@ def getFragLengths(infile, outfile):
     ''' estimate fragment length distribution from read lengths'''
 
     intrack = re.match("(.+).bam(?:.bai)?", infile).groups()[0]
-
+    project_src = os.path.dirname(os.path.realpath(__file__))
     statement = ''' python %(project_src)s/length_stats.py
                            -I %(intrack)s.bam
                            -S %(outfile)s
@@ -673,7 +544,7 @@ def loadFragLengths(infiles, outfile):
 def dedupedBamStats(infile, outfile):
     ''' Calculate statistics on the dedeupped bams '''
 
-    statement = '''python %(scripts_dir)s/bam2stats.py
+    statement = '''python %(scriptsdir)s/bam2stats.py
                          --force-output
                           < %(infile)s > %(outfile)s '''
 
@@ -716,7 +587,7 @@ def loadNspliced(infiles, outfile):
 @transform(dedup_alignments, suffix(".bam"), ".umi_stats.tsv.gz")
 def deduped_umi_stats(infile, outfile):
     ''' calculate histograms of umi frequencies '''
-
+    project_src = os.path.dirname(os.path.realpath(__file__))
     statement = '''python %(project_src)s/umi_hist.py
                            -I %(infile)s
                            -L %(outfile)s.log
@@ -750,6 +621,7 @@ def subsetForSaturationAnalysis(infile, outfiles):
     track = re.match(".+/merged_(.+)\.[^\.]+\.bam", infile).groups()[0]
     infile = P.snip(infile, ".bai")
     statements = []
+    project_src = os.path.dirname(os.path.realpath(__file__))
     statement_template = '''
                             python %%(project_src)s/UMI-tools/dedup_umi.py
                               %%(dedup_options)s
@@ -780,7 +652,7 @@ def subsetBamStats(infile, outfile):
     ''' Stats on the subset BAMs '''
 
     job_options = "-l mem_free=500M"
-    statement = ''' python %(scripts_dir)s/bam2stats.py 
+    statement = ''' python %(scriptsdir)s/bam2stats.py 
                     --force-output < %(infile)s > %(outfile)s '''
     P.run()
 
@@ -803,7 +675,7 @@ def buildContextStats(infiles, outfile):
 
     infile, reffile = infiles
     infile = re.match("(.+.bam)(?:.bai)?", infile).groups()[0]
-    statement = ''' python %(scripts_dir)s/bam_vs_bed.py
+    statement = ''' python %(scriptsdir)s/bam_vs_bed.py
                    --min-overlap=0.5
                    --log=%(outfile)s.log
                    %(infile)s %(reffile)s
@@ -884,7 +756,7 @@ def loadSplicingIndex(infiles, outfile):
 def MappingStats():
     pass
 
-         
+
 ###################################################################
 # Quality control and reproducibility
 ###################################################################
@@ -897,7 +769,7 @@ def calculateReproducibility(infiles, outfile):
 
     job_options = "-l mem_free=1G"
     infiles = " ".join(infiles)
-
+    project_src = os.path.dirname(os.path.realpath(__file__))
     statement = '''python %(project_src)s/calculateiCLIPReproducibility.py
                    %(infiles)s
                    -L %(outfile)s.log
@@ -914,7 +786,7 @@ def reproducibilityAll(infiles, outfile):
 
     job_options = "-l mem_free=10G"
     infiles = " ".join(infiles)
-
+    project_src = os.path.dirname(os.path.realpath(__file__))
     statement = '''python %(project_src)s/calculateiCLIPReproducibility.py
                    %(infiles)s
                    -L %(outfile)s.log
@@ -939,7 +811,7 @@ def reproducibilityVsControl(infiles, outfile):
         job_options = "-l mem_free=1G"
 
         infiles = " ".join(infiles)
-
+        project_src = os.path.dirname(os.path.realpath(__file__))
         statement = '''python %(project_src)s/calculateiCLIPReproducibility.py
                    %(infiles)s
                    -L %(outfile)s.log
@@ -990,7 +862,7 @@ def computeDistances(infiles, outfile):
     infiles = " ".join(infiles)
 
     job_options="-l mem_free=2G"
-
+    project_src = os.path.dirname(os.path.realpath(__file__))
     statement = '''python %(project_src)s/calculateiCLIPReproducibility.py
                    %(infiles)s
                    -L %(outfile)s.log
@@ -1047,8 +919,8 @@ def mergeCounts(infiles, outfile):
     '''Merge feature counts data into one table'''
 
     infiles = " ".join(infiles)
-
-    statement=''' python %(scriptsdir)s/combine_tables.py
+    project_src = os.path.dirname(os.path.realpath(__file__))
+    statement=''' python %(project_src)s/combine_tables.py
                          -c 1
                          -k 7
                          --regex-filename='(.+).tsv.gz'
@@ -1078,7 +950,7 @@ def calculateGeneProfiles(infiles, outfile):
     for each sample'''
 
     infile, reffile = infiles
-    statement = '''python %(scripts_dir)s/bam2geneprofile.py
+    statement = '''python %(scriptsdir)s/bam2geneprofile.py
                            --method=geneprofilewithintrons
                            --bam-file=%(infile)s
                            --gtf-file=%(reffile)s
@@ -1115,7 +987,7 @@ def transcripts2Exons(infile, outfile):
     tmp_outfile = P.snip(outfile, ".gtf.gz") + ".tmp.gtf.gz"
     PipelineiCLIP.removeFirstAndLastExon(infile, tmp_outfile)
 
-    statement = '''python %(scripts_dir)s/gff2bed.py 
+    statement = '''python %(scriptsdir)s/gff2bed.py 
                           --is-gtf 
                            -I %(tmp_outfile)s 
                            -L %(outfile)s.log
@@ -1123,7 +995,7 @@ def transcripts2Exons(infile, outfile):
                   | mergeBed -i stdin -s -d 100 -c 4 -o distinct
                   | awk '($3-$2) > 100 {print}'
                   | awk 'BEGIN{OFS="\\t"} {$4=NR; print}'
-                  | python %(scripts_dir)s/bed2gff.py --as-gtf -L %(outfile)s.log
+                  | python %(scriptsdir)s/bed2gff.py --as-gtf -L %(outfile)s.log
                   | gzip -c > %(outfile)s '''
     P.run()
 
@@ -1141,17 +1013,17 @@ def transcripts2Introns(infile, outfile):
     tmp_outfile = P.snip(outfile, ".gtf.gz") + ".tmp.gtf.gz"
     PipelineiCLIP.removeFirstAndLastExon(infile, tmp_outfile)
 
-    statement = '''python %(scripts_dir)s/gtf2gtf.py
+    statement = '''python %(scriptsdir)s/gtf2gtf.py
                            -I %(tmp_outfile)s
                           --log=%(outfile)s.log
                            --method=exons2introns
-                  | python %(scripts_dir)s/gff2bed.py
+                  | python %(scriptsdir)s/gff2bed.py
                           --is-gtf
                            -L %(outfile)s.log
                   | sort -k1,1 -k2,2n
                   | mergeBed -i stdin -s -d 100 -c 4 -o distinct
                   | awk 'BEGIN{OFS="\\t"} {$4=NR; print}'
-                  | python %(scripts_dir)s/bed2gff.py
+                  | python %(scriptsdir)s/bed2gff.py
                           --as-gtf -L %(outfile)s.log
                   | gzip -c > %(outfile)s '''
     P.run()
@@ -1489,12 +1361,15 @@ def makeUnionBams(infiles, outfile):
     '''Merge replicates together'''
 
     outfile = os.path.abspath(outfile)
+    infiles2 = []
+    for i in infiles:
+        infiles2.append(os.path.basename(i))
 
     if len(infiles) == 1:
-        statement = '''ln -sf %(infiles)s %(outfile)s;
+        statement = '''ln -sf %(infiles2)s %(outfile)s;
                        checkout;
  
-                       ln -sf %(infiles)s.bai %(outfile)s.bai;'''
+                       ln -sf %(infiles2)s.bai %(outfile)s.bai;'''
     else:
 
         statement = ''' samtools merge %(outfile)s %(infiles)s;
@@ -1503,6 +1378,7 @@ def makeUnionBams(infiles, outfile):
                         samtools index %(outfile)s'''
 
     infiles = " ".join(infiles)
+    infiles2 = " ".join(infiles2)
 
     P.run()
 
@@ -1514,7 +1390,7 @@ def makeUnionBams(infiles, outfile):
            r"bigWig/\1_minus.bw"])
 def generateBigWigs(infile, outfiles):
     '''Generate plus and minus strand bigWigs from BAM files '''
-
+    project_src = os.path.dirname(os.path.realpath(__file__))
     out_pattern = P.snip(outfiles[0], "_plus.bw")
     statement = '''python %(project_src)s/iCLIP2bigWig.py
                           -I %(infile)s
@@ -1524,10 +1400,10 @@ def generateBigWigs(infile, outfiles):
     P.run()
 
 ###################################################################
-@follows(mkdir("export/hg19"))
+@follows(mkdir("export/mm10"))
 @transform(generateBigWigs,
            regex("bigWig/(.+)"),
-           r"export/hg19/\1")
+           r"export/mm10/\1")
 def linkBigWig(infile, outfile):
     '''Link bigwig files to export directory'''
     
@@ -1539,7 +1415,7 @@ def linkBigWig(infile, outfile):
 
 
 ###################################################################
-@merge(linkBigWig, "export/hg19/tagwig_trackDb.txt")
+@merge(linkBigWig, "export/mm10/tagwig_trackDb.txt")
 def generateBigWigUCSCFile(infiles, outfile):
     '''Generate track configuration for exporting wig files '''
 
@@ -1605,10 +1481,10 @@ def generateBigWigUCSCFile(infiles, outfile):
 
 
 ###################################################################
-@follows(mkdir("export/hg19"))
+@follows(mkdir("export/mm10"))
 @transform([callSignificantClusters, callReproducibleClusters],
            regex("clusters.dir/(.+).bed.gz"),
-           r"export/hg19/\1.bigBed")
+           r"export/mm10/\1.bigBed")
 def exportClusters(infile, outfile):
     ''' Add a track line to cluster files and export to export dir '''
    
@@ -1616,7 +1492,7 @@ def exportClusters(infile, outfile):
 
 
 ###################################################################
-@merge(exportClusters, "export/hg19/clusters_trackDb.txt")
+@merge(exportClusters, "export/mm10/clusters_trackDb.txt")
 def generateClustersUCSC(infiles, outfile):
 
     PipelineiCLIP.makeClustersUCSC(infiles, outfile, "pipelineClusters",
@@ -1625,7 +1501,7 @@ def generateClustersUCSC(infiles, outfile):
 
 ###################################################################
 @merge([generateClustersUCSC, generateBigWigUCSCFile],
-       "export/hg19/trackDb.txt")
+       "export/mm10/trackDb.txt")
 def mergeTrackDbs(infiles, outfile):
 
     to_cluster = False
@@ -1651,8 +1527,8 @@ def makeHubFiles(outfiles):
         outf.write(hub_file)
 
     genomes_file = '''
-    genome hg19
-    trackDb hg19/trackDb.txt'''
+    genome mm10
+    trackDb mm10/trackDb.txt'''
 
     with IOTools.openFile("export/genomes.txt", "w") as outf:
         outf.write(genomes_file)
@@ -1688,11 +1564,12 @@ def build_report():
 
     E.info("Running mapping report build from scratch")
 #    statement = '''cd mapping.dir;
-#                   python %(scripts_dir)s/CGATPipelines/pipeline_mapping.py
+#                   python %(scriptsdir)s/CGATPipelines/pipeline_mapping.py
 #                   -v5 -p1 make build_report '''
 #    P.run()
     E.info("starting report build process from scratch")
-    P.run_report( clean = True )
+    P.run_report( clean
+ = True )
 
 
 @follows(mkdir("report"), createViewMapping)

@@ -89,6 +89,7 @@ def callClusters(bamfile, gtffile, outfiles,
 
     
     job_options = "-l mem_free=10G"
+    project_src = os.path.dirname(os.path.realpath(__file__))
     statement = '''python %(scriptsdir)s/gtf2gtf.py -L %(logfile)s.log
                            -I %(gtffile)s
                           --method=sort --sort-order=gene+transcript
@@ -152,7 +153,7 @@ def clustersToBigBed(infile, outfile):
     checkParams()
 
     tmp = P.getTempFilename()
-    genome_file = os.path.join(PARAMS["annotations_dir"], "contigs.tsv")
+    genome_file = os.path.join(PARAMS["annotations_dir"], "assembly.dir/contigs.tsv")
     statement = ''' zcat %(infile)s | sort -k1,1 -k2,2n 
                     | awk 'BEGIN{OFS="\\t"} $5=1' > %(tmp)s;
                     checkpoint;
