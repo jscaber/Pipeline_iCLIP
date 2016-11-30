@@ -156,6 +156,7 @@ import PipelineiCLIP as PipelineiCLIP
 import length_stats
 import iCLIP
 import iCLIP2bigWig
+
 ###################################################
 ###################################################
 ###################################################
@@ -245,9 +246,6 @@ def filterPhiX(infiles, outfile):
     statement += "checkpoint; gzip %(outfile)s"
 
     P.run()
-
-
-
 
 
 ###################################################################
@@ -394,7 +392,7 @@ def generateContextBed(infile, outfile):
 
     genome = os.path.join(PARAMS["annotations_dir"], "assembly.dir/contigs.tsv")
     statement = ''' zcat %(infile)s
-                  | python %(scriptsdir)s/gtf2gtf.py
+                  | python %(scripts_dir)s/gtf2gtf.py
                     --method=exons2introns
                     
                      -L %(outfile)s.log
@@ -404,7 +402,7 @@ def generateContextBed(infile, outfile):
                   checkpoint;
 
                   zcat %(infile)s %(outfile)s.tmp.gtf.gz           
-                  | python %(scriptsdir)s/gff2bed.py
+                  | python %(scripts_dir)s/gff2bed.py
                     --set-name=source
                      -L %(outfile)s.log
                   | sort -k1,1 -k2,2n
@@ -435,7 +433,7 @@ def generateContextBed(infile, outfile):
 def getContextIntervalStats(infile, outfile):
     ''' Generate length stastics on context file '''
 
-    statement = ''' python %(scriptsdir)s/bed2stats.py
+    statement = ''' python %(scripts_dir)s/bed2stats.py
                             --aggregate-by=name
                             -I %(infile)s
                     | gzip > %(outfile)s '''
@@ -460,7 +458,7 @@ def createViewMapping(infile, outfile):
 
     to_cluster = False
     statement = '''cd mapping.dir;
-                   nice python %(scriptsdir)s/../../CGATPipelines/CGATPipelines/pipeline_mapping.py
+                   nice python %(scripts_dir)s/../../CGATPipelines/CGATPipelines/pipeline_mapping.py
                    make createViewMapping -v5 -p1 '''
     P.run()
 
@@ -485,16 +483,16 @@ def dedup_alignments(infile, outfile):
     outfile = P.snip(outfile, ".bam")
 
     job_memory="7G"
-    project_src = os.path.dirname(os.path.realpath(__file__))
     statement = ''' python %(project_src)s/UMI-tools/dedup_umi.py
                     %(dedup_options)s
+                    --output-stats=%(outfile)s
                     -I %(infile)s
                     -S %(outfile)s.tmp.bam
                     -L %(outfile)s.log;
  
                     checkpoint;
 
-                    samtools sort %(outfile)s.tmp.bam > %(outfile)s.bam;
+                    samtools sort %(outfile)s.tmp.bam %(outfile)s;
                    
                     checkpoint;
 
@@ -504,10 +502,6 @@ def dedup_alignments(infile, outfile):
 
                     rm %(outfile)s.tmp.bam'''
 
-    P.run()
-
-
-###################################################################
 @transform([dedup_alignments,indexMergedBAMs], 
            regex("(?:merged_)?(.+).bam(?:.bai)?"),
            r"\1.frag_length.tsv")
@@ -528,6 +522,7 @@ def getFragLengths(infile, outfile):
 
 
 ###################################################################
+
 @collate(getFragLengths,
          regex("(mapping|deduped).dir/.+\.frag_length.tsv"),
          r"\1.frag_lengths.load")
@@ -544,7 +539,8 @@ def loadFragLengths(infiles, outfile):
 def dedupedBamStats(infile, outfile):
     ''' Calculate statistics on the dedeupped bams '''
 
-    statement = '''python %(scriptsdir)s/bam2stats.py
+
+    statement = '''python %(scripts_dir)s/bam2stats.py
                          --force-output
                           < %(infile)s > %(outfile)s '''
 
@@ -616,7 +612,7 @@ def buildContextStats(infiles, outfile):
 
     infile, reffile = infiles
     infile = re.match("(.+.bam)(?:.bai)?", infile).groups()[0]
-    statement = ''' python %(scriptsdir)s/bam_vs_bed.py
+    statement = ''' python %(scripts_dir)s/bam_vs_bed.py
                    --min-overlap=0.5
                    --log=%(outfile)s.log
                    %(infile)s %(reffile)s
@@ -855,8 +851,8 @@ def mergeCounts(infiles, outfile):
     '''Merge feature counts data into one table'''
 
     infiles = " ".join(infiles)
-    project_src = os.path.dirname(os.path.realpath(__file__))
-    statement=''' python %(project_src)s/combine_tables.py
+
+    statement=''' python %(scriptsdir)s/combine_tables.py
                          -c 1
                          -k 7
                          --regex-filename='(.+).tsv.gz'
@@ -949,11 +945,11 @@ def transcripts2Introns(infile, outfile):
     tmp_outfile = P.snip(outfile, ".gtf.gz") + ".tmp.gtf.gz"
     PipelineiCLIP.removeFirstAndLastExon(infile, tmp_outfile)
 
-    statement = '''python %(scriptsdir)s/gtf2gtf.py
+    statement = '''python %(scripts_dir)s/gtf2gtf.py
                            -I %(tmp_outfile)s
                           --log=%(outfile)s.log
                            --method=exons2introns
-                  | python %(scriptsdir)s/gff2bed.py
+                  | python %(scripts_dir)s/gff2bed.py
                           --is-gtf
                            -L %(outfile)s.log
                   | sort -k1,1 -k2,2n
@@ -1146,6 +1142,7 @@ def loadClusterContextStats(infiles, outfile):
 
 
 ###################################################################
+
 @follows(callSignificantClusters,
          loadCrosslinkedBasesCount,
          loadClusterCounts,
@@ -1297,15 +1294,12 @@ def makeUnionBams(infiles, outfile):
     '''Merge replicates together'''
 
     outfile = os.path.abspath(outfile)
-    infiles2 = []
-    for i in infiles:
-        infiles2.append(os.path.basename(i))
 
     if len(infiles) == 1:
-        statement = '''ln -sf %(infiles2)s %(outfile)s;
+        statement = '''ln -sf %(infiles)s %(outfile)s;
                        checkout;
  
-                       ln -sf %(infiles2)s.bai %(outfile)s.bai;'''
+                       ln -sf %(infiles)s.bai %(outfile)s.bai;'''
     else:
 
         statement = ''' samtools merge %(outfile)s %(infiles)s;
@@ -1314,7 +1308,6 @@ def makeUnionBams(infiles, outfile):
                         samtools index %(outfile)s'''
 
     infiles = " ".join(infiles)
-    infiles2 = " ".join(infiles2)
 
     P.run()
 
@@ -1326,7 +1319,6 @@ def makeUnionBams(infiles, outfile):
            r"bigWig/\1_minus.bw"])
 def generateBigWigs(infile, outfiles):
     '''Generate plus and minus strand bigWigs from BAM files '''
-    project_src = os.path.dirname(os.path.realpath(__file__))
     out_pattern = P.snip(outfiles[0], "_plus.bw")
     statement = '''python %(project_src)s/iCLIP2bigWig.py
                           -I %(infile)s
@@ -1500,7 +1492,7 @@ def build_report():
 
     E.info("Running mapping report build from scratch")
 #    statement = '''cd mapping.dir;
-#                   python %(scriptsdir)s/CGATPipelines/pipeline_mapping.py
+#                   python %(scripts_dir)s/CGATPipelines/pipeline_mapping.py
 #                   -v5 -p1 make build_report '''
 #    P.run()
     E.info("starting report build process from scratch")

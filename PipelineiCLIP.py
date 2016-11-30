@@ -51,12 +51,12 @@ def getBarcodeCG(table, outfile):
     sample_gc = umi_stats.Sample.apply(_GC)
     umi_gc = umi_stats.UMI.apply(_GC)
 
-    gc_stats = pandas.DataFrame({"Barcode": umi_stats.Barcode,
-                                 "barcode_gc": barcode_gc,
-                                 "sample_gc": sample_gc,
-                                 "umi_gc": umi_gc})
+    gc_stats= pandas.DataFrame({"Barcode":umi_stats.Barcode,
+                                "barcode_gc": barcode_gc,
+                                "sample_gc": sample_gc,
+                                "umi_gc": umi_gc})
 
-    gc_stats.to_csv(IOTools.openFile(outfile, "w"), sep="\t", index=False)
+    gc_stats.to_csv(IOTools.openFile(outfile,"w"), sep="\t", index=False)
 
 
 ###################################################################
@@ -88,7 +88,6 @@ def callClusters(bamfile, gtffile, outfiles,
         options += " -t %s" % PARAMS["clusters_pthresh"]
 
     job_options = "-l mem_free=10G"
-    project_src = os.path.dirname(os.path.realpath(__file__))
     statement = '''python %(scriptsdir)s/gtf2gtf.py -L %(logfile)s.log
                            -I %(gtffile)s
                           --method=sort --sort-order=gene+transcript
@@ -152,7 +151,7 @@ def clustersToBigBed(infile, outfile):
     checkParams()
 
     tmp = P.getTempFilename()
-    genome_file = os.path.join(PARAMS["annotations_dir"], "assembly.dir/contigs.tsv")
+    genome_file = os.path.join(PARAMS["annotations_dir"], "contigs.tsv")
     statement = ''' zcat %(infile)s | sort -k1,1 -k2,2n
                     | awk 'BEGIN{OFS="\\t"} $5=1' > %(tmp)s;
                     checkpoint;
@@ -225,6 +224,7 @@ def subsampleNReadsFromFasta(infile, outfile, nreads, logfile=""):
     if logfile:
         logfile = "-L %s" % logfile
 
+
     statement = ''' python %(scriptsdir)s/fasta2fasta.py
                      -I %(infile)s
                      %(logfile)s
@@ -266,14 +266,18 @@ def calculateSplicingIndex(bamfile, gtffile, outfile):
                         counts["Exon_Exon"] += 1
                     else:
                         counts["spliced_uncounted"] += 1
-                elif (read.reference_start <= intron[0] - 3 and
-                      read.reference_end >= intron[0] + 3):
+
+                elif (read.reference_start <= intron[0] - 3
+                      and read.reference_end >= intron[0] + 3):
+
                     if transcript[0].strand == "+":
                         counts["Exon_Intron"] += 1
                     else:
                         counts["Intron_Exon"] += 1
-                elif (read.reference_start <= intron[1] - 3 and
-                      read.reference_end >= intron[1] + 3):
+
+                elif (read.reference_start <= intron[1] - 3
+                      and read.reference_end >= intron[1] + 3):
+
                     if transcript[0].strand == "+":
                         counts["Intron_Exon"] += 1
                     else:
@@ -291,4 +295,7 @@ def calculateSplicingIndex(bamfile, gtffile, outfile):
     with IOTools.openFile(outfile, "w") as outf:
 
         outf.write("\t".join(header)+"\n")
-        outf.write("\t".join(map(str, [counts[col] for col in header])) + "\n")
+
+        outf.write("\t".join(map(str, [counts[col] for col in header]))
+                   + "\n")
+

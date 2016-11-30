@@ -259,11 +259,13 @@ def getCrosslink(read):
         if read.is_reverse:
             cigar = reversed(read.cigar)
             position = find_first_deletion(cigar)
+
             pos = read.aend - position - half- 1
             cat = "deletion_neg"
         else:
             position = find_first_deletion(read.cigar)
             pos = read.pos + position + half
+
             cat = "deletion_pos"
 
     return (pos,cat)
