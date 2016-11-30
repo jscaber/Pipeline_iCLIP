@@ -494,7 +494,7 @@ def dedup_alignments(infile, outfile):
  
                     checkpoint;
 
-                    samtools sort %(outfile)s.tmp.bam %(outfile)s;
+                    samtools sort %(outfile)s.tmp.bam > %(outfile)s.bam;
                    
                     checkpoint;
 
@@ -607,66 +607,7 @@ def loadDedupedUMIStats(infiles, outfile):
 
 
 ###################################################################
-@follows(mkdir("saturation.dir"), run_mapping)
-@subdivide(indexMergedBAMs, regex(".+/merged_(.+)\.[^\.]+\.bam.bai"),
-       [r"saturation.dir/\1.%.3f.bam" % (1.0/(2 ** x))
-        for x in range(1, 6)] +
-       [r"saturation.dir/\1.%.3f.bam" % (x/10.0)
-        for x in range(6, 11, 1)])
-def subsetForSaturationAnalysis(infile, outfiles):
-    '''Perform subsetting of the original BAM files, dedup and
-    return the context stats. Test for resturn on investment for
-    further sequencing of the same libraries '''
-
-    track = re.match(".+/merged_(.+)\.[^\.]+\.bam", infile).groups()[0]
-    infile = P.snip(infile, ".bai")
-    statements = []
-    project_src = os.path.dirname(os.path.realpath(__file__))
-    statement_template = '''
-                            python %%(project_src)s/UMI-tools/dedup_umi.py
-                              %%(dedup_options)s
-                              -I %(infile)s
-                              -L %(outfile)s.log
-                              -S %(outfile)s.tmp.bam
-                              --subset=%(subset).3f;
-                             checkpoint;
-                             samtools sort %(outfile)s.tmp.bam %(outfile)s;
-                             checkpoint;
-                             samtools index %(outfile)s.bam '''
-    for x in range(1, 6):
-        subset = 1.0/(2 ** x)
-        outfile = "saturation.dir/%%(track)s.%.3f" % subset
-        statements.append(statement_template % locals())
-
-    for x in range(6, 11):
-        subset = x/10.0
-        outfile = "saturation.dir/%%(track)s.%.3f" % subset
-        statements.append(statement_template % locals())
-
-    P.run()
-
-
-###################################################################
-@transform(subsetForSaturationAnalysis, suffix(".bam"), ".bamstats.tsv")
-def subsetBamStats(infile, outfile):
-    ''' Stats on the subset BAMs '''
-
-    job_options = "-l mem_free=500M"
-    statement = ''' python %(scriptsdir)s/bam2stats.py 
-                    --force-output < %(infile)s > %(outfile)s '''
-    P.run()
-
-
-###################################################################
-@merge(subsetBamStats, "subset_bam_stats.load")
-def loadSubsetBamStats(infiles, outfile):
-    P.concatenateAndLoad(infiles, outfile,
-                         regex_filename= ".+/(.+-.+-.+)\.([0-9]+\.[0-9]+).bamstats.tsv",
-                         cat="track,subset")
-
-
-###################################################################
-@transform([indexMergedBAMs, dedup_alignments, subsetForSaturationAnalysis],
+@transform([indexMergedBAMs, dedup_alignments],
            regex("(?:merged_)?(.+).bam(?:.bai)?"),
            add_inputs(generateContextBed),
            r"\1.reference_context.tsv")
@@ -687,16 +628,12 @@ def buildContextStats(infiles, outfile):
 
 ###################################################################
 @collate(buildContextStats,
-         regex("(mapping|deduped|saturation).dir/(?:[^/]+.dir/)?(.+).tsv"),
+         regex("(mapping|deduped).dir/(?:[^/]+.dir/)?(.+).tsv"),
          r"\1_context_stats.load")
 def loadContextStats(infiles, outfile):
 
-    if "saturation" in infiles[0]:
-        regex_filename = ".+/(.+-.+-.+)\.([0-9]+\.[0-9]+).reference_context.tsv"
-        cat = "track,subset"
-    else:
-        regex_filename = ".+/(.+).reference_context.tsv"
-        cat = "track"
+    regex_filename = ".+/(.+).reference_context.tsv"
+    cat = "track"
 
     P.concatenateAndLoad(infiles, outfile,
                          regex_filename=regex_filename,
@@ -747,7 +684,6 @@ def loadSplicingIndex(infiles, outfile):
 
 ###################################################################
 @follows(loadContextStats,
-         loadSubsetBamStats,
          loadDedupedBamStats,
          loadFragLengths,
          loadNspliced,
